@@ -26,6 +26,7 @@
 #########################################################################
 
 import asyncio
+import aiohttp
 
 from lib.model.smartplugin import SmartPlugin
 from lib.item import Items
@@ -52,78 +53,30 @@ class myStiebel(SmartPlugin):
     PLUGIN_VERSION = '1.0.0'    # (must match the version specified in plugin.yaml), use '1.0.0' for your initial plugin Release
 
     def __init__(self, sh):
-        """
-        Initalizes the plugin.
-
-        If you need the sh object at all, use the method self.get_sh() to get it. There should be almost no need for
-        a reference to the sh object any more.
-
-        Plugins have to use the new way of getting parameter values:
-        use the SmartPlugin method get_parameter_value(parameter_name). Anywhere within the Plugin you can get
-        the configured (and checked) value for a parameter by calling self.get_parameter_value(parameter_name). It
-        returns the value in the datatype that is defined in the metadata.
-        """
-
-        # Call init code of parent class (SmartPlugin)
         super().__init__()
 
-        self.logger.error("Hello World")
-            
+        self.username = self.get_parameter_value('username')
+        self.password = self.get_parameter_value('password')
 
-        # cycle time in seconds, only needed, if hardware/interface needs to be
-        # polled for value changes by adding a scheduler entry in the run method of this plugin
-        # (maybe you want to make it a plugin parameter?)
-        # self._cycle = 60
-
-        # if you want to use an item to toggle plugin execution, enable the
-        # definition in plugin.yaml and uncomment the following line
-        #self._pause_item_path = self.get_parameter_value('pause_item')
-
-        # Initialization code goes here
-
-        # On initialization error use:
-        #   self._init_complete = False
-        #   return
+        # Some Id: Fix, but different for each instance
+        self.client_id = "3f2504e0-4f89-41d3-9a0c-0405e82c3301"
+        self.logger.debug(f"Client_Id: {self.client_id}")
 
         self.init_webinterface(WebInterface)
-        # if plugin should not start without web interface
-        # if not self.init_webinterface():
-        #     self._init_complete = False
 
         return
 
     def run(self):
-        """
-        Run method for the plugin
-        """
-        self.logger.dbghigh(self.translate("Methode '{method}' aufgerufen", {'method': 'run()'}))
+        self.logger.debug("myStiebel Plugin started")
+        self.start_asyncio(self.plugin_coro())
 
-        # connect to network / web / serial device
-        # (enable the following lines if you want to open a connection
-        #  don't forget to implement a connect (and disconnect) method.. :) )
-        #self.connect()
-
-        # setup scheduler for device poll loop
-        # (enable the following line, if you need to poll the device.
-        #  Rember to un-comment the self._cycle statement in __init__ as well)
-        #self.scheduler_add(self.get_fullname() + '_poll', self.poll_device, cycle=self._cycle)
-
-        # Start the asyncio eventloop in it's own thread
-        # and set self.alive to True when the eventloop is running
-        # (enable the following line, if you need to use asyncio in the plugin)
-        #self.start_asyncio(self.plugin_coro())
-
-        self.alive = True     # if using asyncio, do not set self.alive here. Set it in the session coroutine
-
-        # let the plugin change the state of pause_item
-        if self._pause_item:
-            self._pause_item(False, self.get_fullname())
-
-        # if you need to create child threads, do not make them daemon = True!
-        # They will not shutdown properly. (It's a python bug)
-        # Also, don't create the thread in __init__() and start them here, but
-        # create and start them here. Threads can not be restarted after they
-        # have been stopped...
+    async def plugin_coro(self):
+        self.logger.debug("enter async")
+        self.alive = True
+        
+        await asyncio.sleep(5)
+        self.logger.debug("leave async")
+        self.alive = False
 
     def stop(self):
         """
@@ -142,7 +95,7 @@ class myStiebel(SmartPlugin):
 
         # stop the asyncio eventloop and it's thread
         # If you use asyncio, enable the following line
-        #self.stop_asyncio()
+        self.stop_asyncio()
 
         # If you called connect() on run(), disconnect here
         # (remember to write a disconnect() method!)
