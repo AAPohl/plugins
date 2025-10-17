@@ -1,0 +1,34 @@
+plugin:
+    type: unknown                   # plugin type (gateway, interface, protocol, system, web)
+    description:
+        de: 'Plugin für Nutzung der myStiebel Cloud'
+        en: 'Plugin to access myStiebel Cloud'
+    maintainer: <autor>
+    state: develop
+    version: 1.0.0
+    sh_minversion: '1.10'
+
+
+    multi_instance: false
+    restartable: unknown
+    classname: myStiebel
+
+parameters:
+    username:
+        type: str
+        mandatory: true
+        description:
+            de: 'Benutzername myStiebel'
+            en: 'username myStiebel'
+
+    password:
+        type: str
+        mandatory: true
+        description:
+            de: 'Passwort myStiebel'
+            en: 'password myStiebel'
+
+item_attributes: NONE
+item_structs: NONE
+plugin_functions: NONE
+logic_parameters: NONE
