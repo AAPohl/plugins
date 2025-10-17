@@ -28,7 +28,12 @@ parameters:
             de: 'Passwort myStiebel'
             en: 'password myStiebel'
 
-item_attributes: NONE
+item_attributes:
+    mystiebel_sensor:
+        type: int
+        description:
+            de: 'Sensor Id'
+            en: 'Sensor Id'
 item_structs: NONE
 plugin_functions: NONE
 logic_parameters: NONE

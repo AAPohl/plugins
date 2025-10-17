@@ -49,6 +49,9 @@ class myStiebel(SmartPlugin):
         self.client_id = "3f2504e0-4f89-41d3-9a0c-0405e82c3301"
         self.logger.debug(f"Client_Id: {self.client_id}")
 
+        self.sensor_ids = []
+        self.itemlist = []
+
         self.init_webinterface(WebInterface)
 
         return
@@ -62,32 +65,14 @@ class myStiebel(SmartPlugin):
         self.stop_asyncio()
 
     def parse_item(self, item):
-        """
-        Default plugin parse_item method. Is called when the plugin is initialized.
-        The plugin can, corresponding to its attribute keywords, decide what to do with
-        the item in future, like adding it to an internal array for future reference
-        :param item:    The item to process.
-        :return:        If the plugin needs to be informed of an items change you should return a call back function
-                        like the function update_item down below. An example when this is needed is the knx plugin
-                        where parse_item returns the update_item function when the attribute knx_send is found.
-                        This means that when the items value is about to be updated, the call back function is called
-                        with the item, caller, source and dest as arguments and in case of the knx plugin the value
-                        can be sent to the knx with a knx write function within the knx plugin.
-        """
-        # check for pause item
-        if item.property.path == self._pause_item_path:
-            self.logger.debug(f'pause item {item.property.path} registered')
-            self._pause_item = item
-            self.add_item(item, updating=True)
+        if self.has_iattr(item.conf, 'mystiebel_sensor'):
+            sensor_id = item.conf['mystiebel_sensor']
+            if sensor_id not in self.sensor_ids:
+                self.sensor_ids.append(sensor_id)
+            if item not in self.itemlist:
+                self.itemlist.append(item)
+            self.logger.debug(f"Registered sensor_id {sensor_id} from item {item.property.path}")
             return self.update_item
-
-        if self.has_iattr(item.conf, 'foo_itemtag'):
-            self.logger.debug(f"parse item: {item}")
-
-        # todo
-        # if interesting item for sending values:
-        #   self._itemlist.append(item)
-        #   return self.update_item
 
     def parse_logic(self, logic):
         pass
