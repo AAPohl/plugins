@@ -30,6 +30,8 @@ import asyncio
 from lib.model.smartplugin import SmartPlugin
 from lib.item import Items
 
+from .pystiebel import *
+
 from .webif import WebInterface
 
 
