@@ -35,22 +35,9 @@ from .pystiebel import *
 
 from .webif import WebInterface
 
-
-# If a needed package is imported, which might be not installed in the Python environment,
-# add it to a requirements.txt file within the plugin's directory
-
-
 class myStiebel(SmartPlugin):
-    """
-    Main class of the Plugin. Does all plugin specific stuff and provides
-    the update functions for the items
 
-    HINT: Please have a look at the SmartPlugin class to see which
-    class properties and methods (class variables and class functions)
-    are already available!
-    """
-
-    PLUGIN_VERSION = '1.0.0'    # (must match the version specified in plugin.yaml), use '1.0.0' for your initial plugin Release
+    PLUGIN_VERSION = '1.0.0'
 
     def __init__(self, sh):
         super().__init__()
@@ -70,39 +57,9 @@ class myStiebel(SmartPlugin):
         self.logger.debug("myStiebel Plugin started")
         self.start_asyncio(self.plugin_coro())
 
-    async def plugin_coro(self):
-        self.logger.debug("enter async")
-        self.alive = True
-        
-        await asyncio.sleep(5)
-        self.logger.debug("leave async")
-        self.alive = False
-
     def stop(self):
-        """
-        Stop method for the plugin
-        """
-        self.logger.dbghigh(self.translate("Methode '{method}' aufgerufen", {'method': 'stop()'}))
-        self.alive = False     # if using asyncio, do not set self.alive here. Set it in the session coroutine
-
-        # let the plugin change the state of pause_item
-        if self._pause_item:
-            self._pause_item(True, self.get_fullname())
-
-        # this stops all schedulers the plugin has started.
-        # you can disable/delete the line if you don't use schedulers
-        self.scheduler_remove_all()
-
-        # stop the asyncio eventloop and it's thread
-        # If you use asyncio, enable the following line
+        self.alive = False
         self.stop_asyncio()
-
-        # If you called connect() on run(), disconnect here
-        # (remember to write a disconnect() method!)
-        #self.disconnect()
-
-        # also, clean up anything you set up in run(), so the plugin can be
-        # cleanly stopped and started again
 
     def parse_item(self, item):
         """
@@ -133,12 +90,7 @@ class myStiebel(SmartPlugin):
         #   return self.update_item
 
     def parse_logic(self, logic):
-        """
-        Default plugin parse_logic method
-        """
-        if 'xxx' in logic.conf:
-            # self.function(logic['name'])
-            pass
+        pass
 
     def update_item(self, item, caller=None, source=None, dest=None):
         """
@@ -175,41 +127,25 @@ class myStiebel(SmartPlugin):
             pass
 
     def poll_device(self):
-        """
-        Polls for updates of the device
-
-        This method is only needed, if the device (hardware/interface) does not propagate
-        changes on it's own, but has to be polled to get the actual status.
-        It is called by the scheduler which is set within run() method.
-        """
-        # # get the value from the device
-        # device_value = ...
-        #
-        # # find the item(s) to update:
-        # for item in self.sh.find_items('...'):
-        #
-        #     # update the item by calling item(value, caller, source=None, dest=None)
-        #     # - value and caller must be specified, source and dest are optional
-        #     #
-        #     # The simple case:
-        #     item(device_value, self.get_fullname())
-        #     # if the plugin is a gateway plugin which may receive updates from several external sources,
-        #     # the source should be included when updating the value:
-        #     item(device_value, self.get_fullname(), source=device_source_id)
         pass
 
     async def plugin_coro(self):
-        """
-        Coroutine for the plugin session (only needed, if using asyncio)
-
-        This coroutine is run as the PluginTask and should
-        only terminate, when the plugin is stopped
-        """
         self.logger.notice("plugin_coro started")
 
         self.alive = True
 
-        # ...
+        try:
+            async with aiohttp.ClientSession() as session:
+                auth = MyStiebelAuth(session, self.username, self.password, self.client_id)
+                await auth.authenticate()
+
+                installations = await auth.get_installations()
+                first_installation_id = str(installations["items"][0]["id"])
+
+                self.logger.debug(f"First installation Id: {first_installation_id}")
+
+        except Exception as e:
+            self.logger.error(f"Fehler bei Authentifizierung oder Abruf: {e}")
 
         self.alive = False
 
