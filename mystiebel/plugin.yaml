@@ -34,6 +34,11 @@ item_attributes:
         description:
             de: 'Sensor Id'
             en: 'Sensor Id'
+    mystiebel_control:
+        type: int
+        description:
+            de: 'Control Id'
+            en: 'Control Id'
 item_structs: NONE
 plugin_functions: NONE
 logic_parameters: NONE
