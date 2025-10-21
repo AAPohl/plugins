@@ -46,6 +46,7 @@ class myStiebel(SmartPlugin):
         self.username = self.get_parameter_value('username')
         self.password = self.get_parameter_value('password')
 
+
         # Some Id: Fix, but different for each instance
         self.client_id = "3f2504e0-4f89-41d3-9a0c-0405e82c3301"
         self.logger.debug(f"Client_Id: {self.client_id}")
@@ -92,24 +93,8 @@ class myStiebel(SmartPlugin):
             asyncio.create_task(self.send_control_value(control_id, item()))
 
     async def send_control_value(self, control_id: int, value: Any):
-        self.logger.error("A")
         try:
-            async with aiohttp.ClientSession() as session:
-                self.logger.error("B")
-                auth = MyStiebelAuth(session, self.username, self.password, self.client_id)
-                await auth.authenticate()
-
-                #Das sollte eigentlich über das WEB UI ausgewählt werden können?
-                installations = await auth.get_installations()
-                first_installation_id = str(installations["items"][0]["id"])
-                self.logger.debug(f"First installation Id: {first_installation_id}")
-
-
-                coordinator = MyStiebelCoordinator(session, auth.token, first_installation_id, self.client_id, self.send_item_updates)
-                websocketclient = setup_websocket_listener(session, coordinator, auth, self.sensor_ids, asyncio.create_task)
-                await asyncio.sleep(1)
-                await coordinator.async_set_value(control_id, value)
-                await websocketclient.stop()
+            await self.coordinator.async_set_value(control_id, value)
 
         except Exception as e:
             self.logger.error(f"Failed to send control command: {e}")
@@ -118,26 +103,23 @@ class myStiebel(SmartPlugin):
         pass
 
     async def plugin_coro(self):
+        self.session = aiohttp.ClientSession()
+        self.auth = MyStiebelAuth(self.session, self.username, self.password, self.client_id)
+        selected_installation = self.get_parameter_value('installation')
+        self.installation_id = await self.get_installation(selected_installation, self.auth)
+        self.coordinator = MyStiebelCoordinator(self.session, self.auth.token, self.installation_id, self.client_id, self.send_item_updates)
+        self.websocketclient = setup_websocket_listener(self.session, self.coordinator, self.auth, self.sensor_ids, asyncio.create_task)
         self.alive = True
 
         try:
-            async with aiohttp.ClientSession() as session:
-                auth = MyStiebelAuth(session, self.username, self.password, self.client_id)
-                await auth.authenticate()
-
-                #Das sollte eigentlich über das WEB UI ausgewählt werden können?
-                installations = await auth.get_installations()
-                first_installation_id = str(installations["items"][0]["id"])
-                self.logger.debug(f"First installation Id: {first_installation_id}")
-
-                coordinator = MyStiebelCoordinator(session, auth.token, first_installation_id, self.client_id, self.send_item_updates)
-                while self.alive:
-                    websocketclient = setup_websocket_listener(session, coordinator, auth, self.sensor_ids, asyncio.create_task)
-                    await asyncio.sleep(1)
-                    await websocketclient.stop()
-                    await asyncio.sleep(60)
+            while self.alive:
+                await asyncio.sleep(60)
+                await self.websocketclient.stop()
+                await self.websocketclient.start(asyncio.create_task)
         except Exception as e:
             self.logger.error(f"Error occurred in item request: {e}")
+
+        await self.session.close()
         self.alive = False
         return
 
@@ -155,3 +137,23 @@ class myStiebel(SmartPlugin):
                         item(value, caller='MyStiebel', source='plugin')
                     except Exception as e:
                         self.logger.error(f"Failed to update item for sensor {sensor_id}: {e}")
+
+# pyStiebel specific
+
+    async def get_installation(self, selected_installation, auth) -> str:
+        installations = await auth.get_installations()
+        available_installation_ids = [str(entry['id']) for entry in installations.get('items', [])]
+        if not available_installation_ids:
+            raise Exception("No installation available at myStiebel.")
+
+        if not selected_installation:
+            self.logger.warning(f"No installation configured. Possible candiates are:")
+            for entry in installations['items']:
+                self.logger.info(f" - {entry['id']}: {entry['name']}")
+            self.logger.info(f"Choosing first: {available_installation_ids[0]}")
+            return available_installation_ids[0]
+        else:
+            if selected_installation in available_installation_ids:
+                return selected_installation
+            else:
+                raise Exception(f"Installation '{installation}'no available at myStiebel")
