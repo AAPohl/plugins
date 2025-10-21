@@ -27,6 +27,7 @@
 
 import asyncio
 import aiohttp
+from typing import Any
 
 from lib.model.smartplugin import SmartPlugin
 from lib.item import Items
@@ -78,45 +79,12 @@ class myStiebel(SmartPlugin):
         pass
 
     def update_item(self, item, caller=None, source=None, dest=None):
-        """
-        Item has been updated
-
-        This method is called, if the value of an item has been updated by SmartHomeNG.
-        It should write the changed value out to the device (hardware/interface) that
-        is managed by this plugin.
-
-        To prevent a loop, the changed value should only be written to the device, if the plugin is running and
-        the value was changed outside of this plugin(-instance). That is checked by comparing the caller parameter
-        with the fullname (plugin name & instance) of the plugin.
-
-        :param item: item to be updated towards the plugin
-        :param caller: if given it represents the callers name
-        :param source: if given it represents the source
-        :param dest: if given it represents the dest
-        """
-        # check for pause item
-        if item is self._pause_item:
-            if caller != self.get_shortname():
-                self.logger.debug(f'pause item changed to {item()}')
-                if item() and self.alive:
-                    self.stop()
-                elif not item() and not self.alive:
-                    self.run()
-            return
-
-        if self.alive and caller != self.get_fullname():
-            # code to execute if the plugin is not stopped
-            # and only, if the item has not been changed by this plugin:
-            self.logger.info(f"update_item: '{item.property.path}' has been changed outside this plugin by caller '{self.callerinfo(caller, source)}'")
-
-            pass
+        pass
 
     def poll_device(self):
         pass
 
     async def plugin_coro(self):
-        self.logger.notice("plugin_coro started")
-
         self.alive = True
 
         try:
@@ -124,15 +92,33 @@ class myStiebel(SmartPlugin):
                 auth = MyStiebelAuth(session, self.username, self.password, self.client_id)
                 await auth.authenticate()
 
+                #Das sollte eigentlich über das WEB UI ausgewählt werden können?
                 installations = await auth.get_installations()
                 first_installation_id = str(installations["items"][0]["id"])
-
                 self.logger.debug(f"First installation Id: {first_installation_id}")
 
+                coordinator = MyStiebelCoordinator(session, auth.token, first_installation_id, self.client_id, self.send_item_updates)
+                while self.alive:
+                    websocketclient = setup_websocket_listener(session, coordinator, auth, self.sensor_ids, asyncio.create_task)
+                    await asyncio.sleep(1)
+                    websocketclient.stop()
+                    await asyncio.sleep(60)
         except Exception as e:
-            self.logger.error(f"Fehler bei Authentifizierung oder Abruf: {e}")
-
+            self.logger.error(f"Error occurred in item request: {e}")
         self.alive = False
-
-        self.logger.notice("plugin_coro finished")
         return
+
+    def send_item_updates(self, data: dict[int, Any]) -> None:
+        for sensor_id, value in data.items():
+            for item in self.itemlist:
+                item_sensor_id = item.conf.get('mystiebel_sensor')
+                if sensor_id == item_sensor_id:
+                    self.logger.debug(f"Updating item {item.property.path} with value {value} for sensor_id {sensor_id}")
+                    try:
+                        if isinstance(item(), float):
+                            value = float(value)
+                        elif isinstance(item(), int):
+                            value = int(float(value)) 
+                        item(value, caller='MyStiebel', source='plugin')
+                    except Exception as e:
+                        self.logger.error(f"Failed to update item for sensor {sensor_id}: {e}")
