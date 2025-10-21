@@ -74,12 +74,45 @@ class myStiebel(SmartPlugin):
                 self.itemlist.append(item)
             self.logger.debug(f"Registered sensor_id {sensor_id} from item {item.property.path}")
             return self.update_item
+        if self.has_iattr(item.conf, 'mystiebel_control'):
+            control_id = item.conf['mystiebel_control']
+            self.logger.debug(f"Registered control_id {control_id} for item {item.property.path}")
+            return self.update_item
 
     def parse_logic(self, logic):
         pass
 
     def update_item(self, item, caller=None, source=None, dest=None):
-        pass
+        if caller == 'MyStiebel':
+            return
+
+        if self.has_iattr(item.conf, 'mystiebel_control'):
+            control_id = item.conf['mystiebel_control']
+            self.logger.debug(f"Item change detected: control_id={control_id}, value={item()} from caller={caller}")
+            asyncio.create_task(self.send_control_value(control_id, item()))
+
+    async def send_control_value(self, control_id: int, value: Any):
+        self.logger.error("A")
+        try:
+            async with aiohttp.ClientSession() as session:
+                self.logger.error("B")
+                auth = MyStiebelAuth(session, self.username, self.password, self.client_id)
+                await auth.authenticate()
+
+                #Das sollte eigentlich über das WEB UI ausgewählt werden können?
+                installations = await auth.get_installations()
+                first_installation_id = str(installations["items"][0]["id"])
+                self.logger.debug(f"First installation Id: {first_installation_id}")
+
+
+                coordinator = MyStiebelCoordinator(session, auth.token, first_installation_id, self.client_id, self.send_item_updates)
+                websocketclient = setup_websocket_listener(session, coordinator, auth, self.sensor_ids, asyncio.create_task)
+                await asyncio.sleep(1)
+                await coordinator.async_set_value(control_id, value)
+                await websocketclient.stop()
+
+        except Exception as e:
+            self.logger.error(f"Failed to send control command: {e}")
 
     def poll_device(self):
         pass
@@ -101,7 +134,7 @@ class myStiebel(SmartPlugin):
                 while self.alive:
                     websocketclient = setup_websocket_listener(session, coordinator, auth, self.sensor_ids, asyncio.create_task)
                     await asyncio.sleep(1)
-                    websocketclient.stop()
+                    await websocketclient.stop()
                     await asyncio.sleep(60)
         except Exception as e:
             self.logger.error(f"Error occurred in item request: {e}")
