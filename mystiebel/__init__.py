@@ -114,8 +114,7 @@ class myStiebel(SmartPlugin):
         try:
             while self.alive:
                 await asyncio.sleep(60)
-                await self.websocketclient.stop()
-                await self.websocketclient.start(asyncio.create_task)
+                await self.websocketclient.restart(asyncio.create_task)
         except Exception as e:
             self.logger.error(f"Error occurred in item request: {e}")
 
