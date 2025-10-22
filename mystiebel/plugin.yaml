@@ -28,6 +28,12 @@ parameters:
             de: 'Passwort myStiebel'
             en: 'password myStiebel'
 
+    installation:
+        type: str
+        description:
+            de: 'Installation Id'
+            en: 'Installation Id'
+
 item_attributes:
     mystiebel_sensor:
         type: int
