@@ -66,6 +66,7 @@ class MyStiebelAuth:
                 self.token = data.get("token")
                 if not self.token:
                     raise ValueError("Authentication succeeded but no token was received")
+                _LOGGER.debug("Authentication succeeded and token was received")
                 # Assume token is valid for 24 hours (adjust based on actual token lifetime)
                 self.token_expiry = datetime.now() + timedelta(hours=24)
 
@@ -95,9 +96,16 @@ class MyStiebelAuth:
 
     async def ensure_valid_token(self) -> None:
         """Ensure the token is valid, refreshing if necessary."""
-        if not self.token or not self.token_expiry:
+        if not self.token:
+            _LOGGER.debug("Token not existing, creating...")
             await self.authenticate()
             return
+
+        if not self.token_expiry:
+            _LOGGER.debug("Token expired, refreshing...")
+            await self.authenticate()
+            return
+
 
         # Check if token needs refresh
         time_until_expiry = (self.token_expiry - datetime.now()).total_seconds()
