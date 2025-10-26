@@ -4,18 +4,13 @@ import asyncio
 from collections.abc import Callable
 import json
 import logging
-import random
-from typing import Any, Awaitable
+from typing import Any
 
 import aiohttp
 
 from .const import (
     APP_NAME,
     APP_VERSION_ANDROID,
-    MSG_ID_LONG_MAX,
-    MSG_ID_LONG_MIN,
-    MSG_ID_MAX,
-    MSG_ID_MIN,
     USER_AGENT,
     WEBSOCKET_HEARTBEAT,
     WEBSOCKET_RECONNECT_INITIAL,
@@ -23,35 +18,10 @@ from .const import (
     WS_URL,
 )
 
+from .message_generator import MessageGenerator
+from .mystiebel_auth import MyStiebelAuth
+
 _LOGGER = logging.getLogger(__name__)
-
-# Track used message IDs to prevent collisions
-_used_message_ids: set[int] = set()
-
-
-def _generate_message_id(long_format: bool = False) -> int:
-    """Generate a unique message ID with collision detection."""
-    min_val = MSG_ID_LONG_MIN if long_format else MSG_ID_MIN
-    max_val = MSG_ID_LONG_MAX if long_format else MSG_ID_MAX
-
-    # Clear old IDs if we have too many (prevent memory growth)
-    if len(_used_message_ids) > 1000:
-        _used_message_ids.clear()
-
-    attempts = 0
-    while attempts < 100:
-        msg_id = random.randint(min_val, max_val)
-        if msg_id not in _used_message_ids:
-            _used_message_ids.add(msg_id)
-            return msg_id
-        attempts += 1
-
-    # Fallback: clear and try again
-    _used_message_ids.clear()
-    msg_id = random.randint(min_val, max_val)
-    _used_message_ids.add(msg_id)
-    return msg_id
-
 
 class WebSocketClient:
     """WebSocket client for MyStiebel integration."""
@@ -59,29 +29,28 @@ class WebSocketClient:
     def __init__(
         self,
         session: aiohttp.ClientSession,
-        coordinator,
-        auth,
+        auth: MyStiebelAuth,
+        installation_id: str,
+        client_id: str,
         fields_to_monitor: list[int],
+        on_update: Callable[[int, Any], None],
+
     ) -> None:
         """Initialize the WebSocket client."""
         self.session = session
-        self.coordinator = coordinator
         self.auth = auth
         self.fields_to_monitor = fields_to_monitor
+        self.on_update = on_update
+        self.data: dict[int, Any] = {}
         self.reconnect_delay = WEBSOCKET_RECONNECT_INITIAL
         self._running = True
         self._task = None
         self._current_ws = None
+        self.message_generator = MessageGenerator(installation_id, client_id)
 
-    async def restart(self, create_task_func: Callable[[Awaitable], Any]) -> None:
-        """Restart the WebSocket client cleanly."""
-        await self.stop()
-        self._running = True
-        self.start(create_task_func)
-
-    def start(self, create_task_func: Callable[[Awaitable], Any]) -> None:
+    def start(self) -> None:
         """Start the WebSocket client as a background task."""
-        self._task = create_task_func(
+        self._task = asyncio.create_task(
             self._run()
         )
 
@@ -146,7 +115,6 @@ class WebSocketClient:
             # Create WebSocket connection
             async with await self._create_connection() as ws:
                 self._current_ws = ws
-                self.coordinator.set_websocket(ws)
 
                 # Login to WebSocket
                 await self._send_login(ws)
@@ -168,19 +136,17 @@ class WebSocketClient:
             return False
         finally:
             self._current_ws = None
-            self.coordinator.set_websocket(None)
 
     async def _authenticate(self) -> None:
         """Authenticate and update token."""
-        _LOGGER.debug("Authenticating for WebSocket connection")
-        await self.auth.authenticate()
-        self.coordinator.set_token(self.auth.token)
-        _LOGGER.debug("Authentication successful")
+        _LOGGER.debug("Authenticating for WebSocket connection if token not valid")
+        await self.auth.ensure_valid_token()
+        _LOGGER.debug("(Re-)authentication successful")
 
     async def _create_connection(self) -> aiohttp.ClientWebSocketResponse:
         """Create WebSocket connection with proper headers."""
         headers = {
-            "Authorization": f"Bearer {self.coordinator.token}",
+            "Authorization": f"Bearer {self.auth.token}",
             "X-SC-ClientApp-Name": APP_NAME,
             "X-SC-ClientApp-Version": APP_VERSION_ANDROID,
             "User-Agent": USER_AGENT,
@@ -194,15 +160,7 @@ class WebSocketClient:
 
     async def _send_login(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         """Send login message to WebSocket."""
-        login_msg = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "Login",
-            "params": {
-                "clientId": self.coordinator.installation_id,
-                "jwt": self.coordinator.token,
-            },
-        }
+        login_msg = self.message_generator.create_login(self.auth.token)
         await ws.send_json(login_msg)
         _LOGGER.debug("WebSocket login message sent")
 
@@ -231,8 +189,6 @@ class WebSocketClient:
                 await self._handle_login_response(ws)
             elif self._is_initial_data(data):
                 await self._handle_initial_data(ws, data)
-            elif self._is_value_update(data):
-                await self._handle_value_update(data)
 
         except json.JSONDecodeError as e:
             _LOGGER.warning("Error parsing WebSocket message: %s", e)
@@ -250,14 +206,10 @@ class WebSocketClient:
             and "fields" in result
         )
 
-    def _is_value_update(self, data: dict[str, Any]) -> bool:
-        """Check if message is a value update."""
-        return data.get("method") == "valuesChanged"
-
     async def _handle_login_response(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         """Handle successful login response."""
         # Request initial values
-        msg = self._create_get_values_msg()
+        msg = self.message_generator.create_get_values(self.fields_to_monitor)
         await ws.send_json(msg)
         _LOGGER.debug("Requested initial values")
 
@@ -268,43 +220,11 @@ class WebSocketClient:
         fields = data["result"]["fields"]
         _LOGGER.debug("Initial data received with %d values", len(fields))
 
-        # Process the data
-        self.coordinator.process_data_update(fields)
-
-        # Subscribe to updates
-        msg = self._create_subscribe_msg()
-        await ws.send_json(msg)
-        _LOGGER.debug("Subscribed to value updates")
-
-    async def _handle_value_update(self, data: dict[str, Any]) -> None:
-        """Handle value change notification."""
-        params = data.get("params", {})
-        _LOGGER.debug("Value update received: %s", params)
-        self.coordinator.process_data_update([params])
-
-    def _create_get_values_msg(self) -> dict[str, Any]:
-        """Create a getValues message."""
-        return {
-            "jsonrpc": "2.0",
-            "id": _generate_message_id(),
-            "method": "getValues",
-            "params": {
-                "installationId": self.coordinator.installation_id,
-                "fields": self.fields_to_monitor,
-            },
-        }
-
-    def _create_subscribe_msg(self) -> dict[str, Any]:
-        """Create a Subscribe message."""
-        return {
-            "jsonrpc": "2.0",
-            "id": _generate_message_id(),
-            "method": "Subscribe",
-            "params": {
-                "installationId": self.coordinator.installation_id,
-                "registerIndexes": self.fields_to_monitor,
-            },
-        }
+        for field in fields:
+            register = field.get("registerIndex")
+            value = field.get("displayValue")
+            if register is not None:
+                self.on_update(register, value)
 
     async def _handle_reconnect(self) -> None:
         """Handle reconnection with exponential backoff."""
@@ -325,45 +245,25 @@ class WebSocketClient:
             self.reconnect_delay * 2, WEBSOCKET_RECONNECT_MAX
         )
 
+    async def async_set_value(self, register_index: int, value: Any) -> bool:
+        """Set a value via WebSocket."""
+        if self._current_ws and not self._current_ws.closed:
 
-def setup_websocket_listener(
-    session: aiohttp.ClientSession,
-    coordinator,
-    auth,
-    fields_to_monitor: list[int],
-    create_task_func: Callable[[Awaitable], Any]
-) -> WebSocketClient:
-    """Set up and start the WebSocket listener.
+            message = self.message_generator.create_set_values(register_index, value)
+            _LOGGER.debug("Sending setValues message for register %d", register_index)
 
-    Args:
-        session: aiohttp client session
-        coordinator: Data coordinator
-        auth: Authentication handler
-        fields_to_monitor: List of parameter IDs to monitor
+            try:
+                await self._current_ws.send_json(message)
+                # Optimistically update the local data
+                self.on_update(register_index, value)
+                return True
+            except Exception as e:
+                _LOGGER.error(
+                    "Failed to send value to register %d: %s",
+                    register_index,
+                    e,
+                )
+                return False
 
-    Returns:
-        WebSocketClient instance
-    """
-    client = WebSocketClient(session, coordinator, auth, fields_to_monitor)
-    client.start(create_task_func)
-    return client
-
-
-def SET_VALUE_MSG(
-    installation_id: str, client_id: str, register_index: int, value: Any
-) -> dict[str, Any]:
-    """Create a setValues message.
-
-    This is a standalone function because it's called from the coordinator.
-    """
-    return {
-        "jsonrpc": "2.0",
-        "id": _generate_message_id(long_format=True),
-        "method": "setValues",
-        "params": {
-            "installationId": installation_id,
-            "UUID": client_id,
-            "listenWithValuesChanged": True,
-            "fields": [{"registerIndex": register_index, "displayValue": value}],
-        },
-    }
+        _LOGGER.error("WebSocket not available or closed. Cannot set value")
+        return False
