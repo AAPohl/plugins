@@ -1,0 +1,47 @@
+from .message_id_generator import MessageIdGenerator
+from typing import Any
+
+class MessageGenerator:
+
+    def __init__(self, installation_id: str, client_id: str) -> None:
+        self.installation_id = installation_id
+        self.client_id = client_id
+        self.message_id_generator = MessageIdGenerator()
+
+    def create_login(self, token: str) -> dict[str, Any]:
+        """Create a login message."""
+        return {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "Login",
+            "params": {
+                "clientId": self.client_id,
+                "jwt": token,
+            }
+        }
+
+    def create_get_values(self, register_indices: list[int]) -> dict[str, Any]:
+        """Create a getValues message."""
+        return {
+            "jsonrpc": "2.0",
+            "id": self.message_id_generator.generate(),
+            "method": "getValues",
+            "params": {
+                "installationId": self.installation_id,
+                "fields": register_indices,
+            }
+        }
+
+    def create_set_values(self, register_index: int, value: Any) -> dict[str, Any]:
+        """Create a setValues message."""
+        return {
+            "jsonrpc": "2.0",
+            "id": self.message_id_generator.generate(long_format=True),
+            "method": "setValues",
+            "params": {
+                "installationId": self.installation_id,
+                "UUID": self.client_id,
+                "listenWithValuesChanged": True,
+                "fields": [{"registerIndex": register_index, "displayValue": value}],
+            }
+        }
