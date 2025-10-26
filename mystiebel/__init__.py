@@ -94,7 +94,7 @@ class myStiebel(SmartPlugin):
 
     async def send_control_value(self, control_id: int, value: Any):
         try:
-            await self.coordinator.async_set_value(control_id, value)
+            await self.websocketclient.async_set_value(control_id, value)
 
         except Exception as e:
             self.logger.error(f"Failed to send control command: {e}")
@@ -103,18 +103,16 @@ class myStiebel(SmartPlugin):
         pass
 
     async def plugin_coro(self):
-        self.session = aiohttp.ClientSession()
-        self.auth = MyStiebelAuth(self.session, self.username, self.password, self.client_id)
         selected_installation = self.get_parameter_value('installation')
-        self.installation_id = await self.get_installation(selected_installation, self.auth)
-        self.coordinator = MyStiebelCoordinator(self.session, self.auth.token, self.installation_id, self.client_id, self.send_item_updates)
-        self.websocketclient = setup_websocket_listener(self.session, self.coordinator, self.auth, self.sensor_ids, asyncio.create_task)
+        await self.initialize_websocketclient(selected_installation)
+
+        self.websocketclient.start()
         self.alive = True
 
         try:
             while self.alive:
                 await asyncio.sleep(60)
-                await self.websocketclient.restart(asyncio.create_task)
+                await self.websocketclient._handle_login_response(self.websocketclient._current_ws)
         except Exception as e:
             self.logger.error(f"Error occurred in item request: {e}")
 
@@ -122,22 +120,28 @@ class myStiebel(SmartPlugin):
         self.alive = False
         return
 
-    def send_item_updates(self, data: dict[int, Any]) -> None:
-        for sensor_id, value in data.items():
-            for item in self.itemlist:
-                item_sensor_id = item.conf.get('mystiebel_sensor')
-                if sensor_id == item_sensor_id:
-                    self.logger.debug(f"Updating item {item.property.path} with value {value} for sensor_id {sensor_id}")
-                    try:
-                        if isinstance(item(), float):
-                            value = float(value)
-                        elif isinstance(item(), int):
-                            value = int(float(value)) 
+    def send_item_updates(self, sensor_id: int, value: Any) -> None:
+        for item in self.itemlist:
+            item_sensor_id = item.conf.get('mystiebel_sensor')
+            if sensor_id == item_sensor_id:
+                try:
+                    current_value = item()
+                    if isinstance(item(), float):
+                        value = float(value)
+                    elif isinstance(item(), int):
+                        value = int(float(value))
+                    if current_value != value:
+                        self.logger.debug(f"Updating item {item.property.path} with value {value} for sensor_id {sensor_id}")
                         item(value, caller='MyStiebel', source='plugin')
-                    except Exception as e:
-                        self.logger.error(f"Failed to update item for sensor {sensor_id}: {e}")
+                except Exception as e:
+                    self.logger.error(f"Failed to update item for sensor {sensor_id}: {e}")
 
 # pyStiebel specific
+    async def initialize_websocketclient(self, selected_installation) -> None:
+        self.session = aiohttp.ClientSession()
+        self.auth = MyStiebelAuth(self.session, self.username, self.password, self.client_id)
+        self.installation_id = await self.get_installation(selected_installation, self.auth)
+        self.websocketclient = WebSocketClient(self.session, self.auth, self.installation_id, self.client_id, self.sensor_ids, self.send_item_updates)
 
     async def get_installation(self, selected_installation, auth) -> str:
         installations = await auth.get_installations()
