@@ -94,7 +94,7 @@ class myStiebel(SmartPlugin):
 
     async def send_control_value(self, control_id: int, value: Any):
         try:
-            await self.websocketclient.async_set_value(control_id, value)
+            await self.websocketclient.set_value(control_id, value)
 
         except Exception as e:
             self.logger.error(f"Failed to send control command: {e}")
@@ -112,7 +112,7 @@ class myStiebel(SmartPlugin):
         try:
             while self.alive:
                 await asyncio.sleep(60)
-                await self.websocketclient._handle_login_response(self.websocketclient._current_ws)
+                await self.websocketclient.request_values()
         except Exception as e:
             self.logger.error(f"Error occurred in item request: {e}")
 
