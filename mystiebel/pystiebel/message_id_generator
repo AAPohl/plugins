@@ -1,0 +1,30 @@
+import random
+from .const import MSG_ID_LONG_MAX, MSG_ID_LONG_MIN, MSG_ID_MAX, MSG_ID_MIN
+
+class MessageIdGenerator:
+    """Generates unique message IDs with collision detection."""
+
+    def __init__(self) -> None:
+        # Track used message IDs to prevent collisions
+        self._used_message_ids: set[int] = set()
+
+    def generate(self, long_format: bool = False) -> int:
+        """Generate a unique message ID."""
+        min_val = MSG_ID_LONG_MIN if long_format else MSG_ID_MIN
+        max_val = MSG_ID_LONG_MAX if long_format else MSG_ID_MAX
+
+        # Prevent memory growth
+        if len(self._used_message_ids) > 1000:
+            self._used_message_ids.clear()
+
+        for _ in range(100):
+            msg_id = random.randint(min_val, max_val)
+            if msg_id not in self._used_message_ids:
+                self._used_message_ids.add(msg_id)
+                return msg_id
+
+        # Fallback: clear and return random
+        self._used_message_ids.clear()
+        msg_id = random.randint(min_val, max_val)
+        self._used_message_ids.add(msg_id)
+        return msg_id
